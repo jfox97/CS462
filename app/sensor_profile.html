@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Sensor Profile</title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+        <script src="sensor_profile.js"></script>
+    </head>
+    <body>
+        <h3>Sensor Profile</h3>
+        <form id="profile_form">
+            <label for="location">Location:</label><br />
+            <input id="location" type="text" name="location"><br />
+            <label for="name">Name:</label><br />
+            <input id="name" type="text" name="name"><br />
+            <label for="threshold">Temperature Threshold:</label><br />
+            <input id="threshold" type="number" name="threshold"><br />
+            <label for="phone_number">Phone:</label><br />
+            <input id="phone" type="tel" name="phone_number"><br /><br />
+            <input type="submit" vale="Submit">
+        </form>
+        <p id="status"></p>
+        <br /><br />
+        <a href="index.html">Return home</a>
+    </body>
+</html>

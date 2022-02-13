@@ -5,13 +5,19 @@ ruleset wovyn_base {
       accountSID = meta:rulesetConfig{"account_sid"}
       authToken = meta:rulesetConfig{"auth_token"}
       messagingServiceSID = meta:rulesetConfig{"messaging_service_sid"}
+    use module sensor_profile alias profile
     name "Wovyn Base"
     author "Jason Fox"
   }
 
   global {
-    temperature_threshold = 100;
-    notification_number = "+18019600469"
+    threshold = function() {
+      profile:profile(){"threshold"} || 80
+    }
+
+    phone = function() {
+      profile:profile(){"phone_number"} || "+18019600469"
+    }
   }
 
   rule process_heartbeat {
@@ -32,7 +38,7 @@ ruleset wovyn_base {
   }
 
   rule find_high_temps {
-    select when wovyn new_temperature_reading where event:attr("temperature")[0]{"temperatureF"} > temperature_threshold
+    select when wovyn new_temperature_reading where event:attr("temperature")[0]{"temperatureF"} > threshold()
     pre {
       temp = event:attr("temperature")[0]{"temperatureF"}
     }
@@ -51,6 +57,6 @@ ruleset wovyn_base {
       temp = event:attr("temperature").klog("High temperature: ")
       timestamp = event:attr("timestamp").klog("Timestamp: ")
     }
-    twilio:sendMessage(notification_number, "High temperature alert. Temperature: " + temp + " Timestamp: " + timestamp)
+    twilio:sendMessage(phone(), "High temperature alert. Temperature: " + temp + " Timestamp: " + timestamp)
   }
 }
