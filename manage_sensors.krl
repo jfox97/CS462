@@ -9,6 +9,42 @@ ruleset manage_sensors {
         sensors = function() {
             ent:sensors
         }
+
+        rulesets = [
+            {
+                "id": 0,
+                "url": "https://raw.githubusercontent.com/jfox97/CS462/master/twilio.sdk.krl",
+                "config": {}
+            },
+            {
+                "id": 1,
+                "url": "https://raw.githubusercontent.com/jfox97/CS462/master/temperature_store.krl",
+                "config": {}
+            },
+            {
+                "id": 2,
+                "url": "https://raw.githubusercontent.com/jfox97/CS462/master/sensor_profile.krl",
+                "config": {}
+            },
+            {
+                "id": 3,
+                "url": "https://raw.githubusercontent.com/jfox97/CS462/master/io.picoloabs.wovyn.emitter.krl",
+                "config": {}
+            },
+            {
+                "id": 4,
+                "url": "https://raw.githubusercontent.com/jfox97/CS462/master/wovyn_base.krl",
+                "config": {
+                    "account_sid": meta:rulesetConfig{"account_sid"},
+                    "auth_token": meta:rulesetConfig{"auth_token"},
+                    "messaging_service_sid": meta:rulesetConfig{"messaging_service_sid"}
+                }
+            },
+        ]
+
+        default_location = "Vineyard, UT"
+        default_phone = "+18019600469"
+        default_threshold = "90"
     }
 
     rule initialize {
@@ -33,7 +69,7 @@ ruleset manage_sensors {
         }
     }
 
-    rule store_new_sensor {
+    rule store_sensor {
         select when wrangler new_child_created
         pre {
             sensor = {"eci": event:attr("eci")}
@@ -45,11 +81,12 @@ ruleset manage_sensors {
         }
     }
 
-    rule install_twilio_sdk {
+    rule install_rulesets {
         select when wrangler new_child_created
-        pre
-        {
+        foreach rulesets setting (r)
+        pre {
             eci = event:attr("eci")
+            name = event:attr("name")
         }
         event:send(
             {
@@ -57,91 +94,51 @@ ruleset manage_sensors {
                 "eid": "install-ruleset",
                 "domain": "wrangler", "type": "install_ruleset_request",
                 "attrs": {
-                    "url": "https://raw.githubusercontent.com/jfox97/CS462/master/twilio.sdk.krl",
-                    "config": {}
+                    "url": r{"url"},
+                    "config": r{"config"}
                 }
             }
         )
         fired {
-            raise sensor event "twilio_sdk_installed" attributes {
-                "eci": eci
-            }
+            raise sensor event "ruleset_installed"
+                attributes {"ruleset": r, "eci": eci, "name": name}
         }
     }
 
-    rule install_temperature_store {
-        select when wrangler new_child_created
-        pre
-        {
+    rule set_sensor_profile {
+        select when sensor ruleset_installed where event:attr("ruleset"){"id"} == rulesets.length() - 1
+        pre {
             eci = event:attr("eci")
-        }
-        event:send(
-            { 
-                "eci": eci, 
-                "eid": "install-ruleset",
-                "domain": "wrangler", "type": "install_ruleset_request",
-                "attrs": {
-                    "url": "https://raw.githubusercontent.com/jfox97/CS462/master/temperature_store.krl",
-                    "config": {}
-                }
-            }
-        )
-    }
-
-    rule install_wovyn_base {
-        select when sensor twilio_sdk_installed
-        pre
-        {
-            eci = event:attr("eci")
+            name = event:attr("name")
         }
         event:send(
             {
-                "eci": eci, 
-                "eid": "install-ruleset",
-                "domain": "wrangler", "type": "install_ruleset_request",
+                "eci": eci,
+                "eid": "set-sensor-profile",
+                "domain": "sensor", "type": "profile_updated",
                 "attrs": {
-                    "url": "https://raw.githubusercontent.com/jfox97/CS462/master/wovyn_base.krl",
-                    "config": {"account_sid":"AC426c1eb111b29962294e16f204523e52","auth_token":"2b237dfedda92a45065276e2900ec06d","messaging_service_sid":"MGcf4ea7f4f0db5d07ec57cedfe01c0901"}
+                    "location": default_location,
+                    "name": name,
+                    "threshold": default_threshold,
+                    "phone_number": default_phone
                 }
             }
         )
     }
 
-    rule install_sensor_profile {
-        select when wrangler new_child_created
-        pre
-        {
-            eci = event:attr("eci")
+    rule delete_sensor {
+        select when sensor unneeded_sensor
+        pre {
+            name = event:attr("name")
+            exists = ent:sensors && ent:sensors >< name
+            eci = ent:sensors{[name, "eci"]}
         }
-        event:send(
-            { 
-                "eci": eci, 
-                "eid": "install-ruleset",
-                "domain": "wrangler", "type": "install_ruleset_request",
-                "attrs": {
-                    "url": "https://raw.githubusercontent.com/jfox97/CS462/master/sensor_profile.krl",
-                    "config": {}
-                }
-            }
-        )
-    }
-
-    rule install_wovyn_emitter {
-        select when wrangler new_child_created
-        pre
-        {
-            eci = event:attr("eci")
+        if exists && eci then
+            send_directive("deleting_sensor", {"name": name})
+        fired {
+            raise wrangler event "child_deletion_request"
+                attributes {"eci": eci}
+            clear ent:sensors{name}
         }
-        event:send(
-            { 
-                "eci": eci, 
-                "eid": "install-ruleset",
-                "domain": "wrangler", "type": "install_ruleset_request",
-                "attrs": {
-                    "url": "https://raw.githubusercontent.com/jfox97/CS462/master/io.picoloabs.wovyn.emitter.krl",
-                    "config": {}
-                }
-            }
-        )
     }
 }
