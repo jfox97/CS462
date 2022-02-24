@@ -1,13 +1,20 @@
 ruleset manage_sensors {
     meta {
+        use module io.picolabs.wrangler alias wrangler
         name "Manage Sensors"
         author "Jason Fox"
-        shares sensors
+        shares sensors, temperatures
     }
 
     global {
         sensors = function() {
             ent:sensors
+        }
+
+        temperatures = function() {
+            ent:sensors.values().map(function(v) {
+                wrangler:skyQuery(v{"test_channel"}, "temperature_store", "temperatures")
+            }).reduce(function(a, b) { a.append(b) })
         }
 
         rulesets = [
@@ -44,7 +51,7 @@ ruleset manage_sensors {
 
         default_location = "Vineyard, UT"
         default_phone = "+18019600469"
-        default_threshold = "90"
+        default_threshold = "75"
     }
 
     rule initialize {
