@@ -59,4 +59,16 @@ ruleset wovyn_base {
     }
     twilio:sendMessage(phone(), "High temperature alert. Temperature: " + temp + " Timestamp: " + timestamp)
   }
+
+  rule send_back_channel {
+    select when wrangler channel_created
+    pre {
+      channel = event:attr("channel")
+    }
+    always {
+      raise sensor event "channel_created" attributes {
+        "channel": channel
+      }
+    }
+  }
 }

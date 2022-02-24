@@ -105,6 +105,39 @@ ruleset manage_sensors {
         }
     }
 
+    rule add_test_channel {
+        select when sensor ruleset_installed where event:attr("ruleset"){"id"} == rulesets.length() - 1
+        pre {
+            eci = event:attr("eci")
+        }
+        event:send(
+            {
+                "eci": eci,
+                "eid": "add-test-channel",
+                "domain": "wrangler", "type": "new_channel_request",
+                "attrs": {
+                    "tags": ["test"],
+                    "eventPolicy": {
+                        "allow": [ { "domain": "emitter", "name": "*" }, { "domain": "sensor", "name": "*" } ],
+                        "deny": []
+                    },
+                    "queryPolicy": {
+                        "allow": [ { "rid": "sensor_profile", "name": "*" }, { "rid": "temperature_store", "name": "*" } ],
+                        "deny": []
+                    }
+                }
+            }
+        )
+    }
+
+    rule store_test_channel {
+        select when sensor channel_created
+        pre {
+            channel = event:attr("channel")
+        }
+        send_directive(channel)
+    }
+
     rule set_sensor_profile {
         select when sensor ruleset_installed where event:attr("ruleset"){"id"} == rulesets.length() - 1
         pre {
