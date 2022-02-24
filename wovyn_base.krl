@@ -1,6 +1,7 @@
 ruleset wovyn_base {
   meta {
     use module com.twilio.sdk alias twilio
+    use module io.picolabs.wrangler alias wrangler
     with
       accountSID = meta:rulesetConfig{"account_sid"}
       authToken = meta:rulesetConfig{"auth_token"}
@@ -17,6 +18,10 @@ ruleset wovyn_base {
 
     phone = function() {
       profile:profile(){"phone_number"} || "+18019600469"
+    }
+
+    name = function() {
+      profile:profile(){"name"}
     }
   }
 
@@ -64,11 +69,18 @@ ruleset wovyn_base {
     select when wrangler channel_created
     pre {
       channel = event:attr("channel")
+      parent_eci = wrangler:parent_eci()
     }
-    always {
-      raise sensor event "channel_created" attributes {
-        "channel": channel
+    event:send(
+      {
+          "eci": parent_eci, 
+          "eid": "send_channel",
+          "domain": "sensor", "type": "channel_created",
+          "attrs": { 
+            "channel": channel,
+            "name": name()
+          }
       }
-    }
+    )
   }
 }

@@ -105,8 +105,34 @@ ruleset manage_sensors {
         }
     }
 
-    rule add_test_channel {
+    rule set_sensor_profile {
         select when sensor ruleset_installed where event:attr("ruleset"){"id"} == rulesets.length() - 1
+        pre {
+            eci = event:attr("eci")
+            name = event:attr("name")
+        }
+        event:send(
+            {
+                "eci": eci,
+                "eid": "set-sensor-profile",
+                "domain": "sensor", "type": "profile_updated",
+                "attrs": {
+                    "location": default_location,
+                    "name": name,
+                    "threshold": default_threshold,
+                    "phone_number": default_phone
+                }
+            }
+        )
+        fired {
+            raise sensor event "profile_set" attributes {
+                "eci": eci
+            }
+        }
+    }
+
+    rule add_test_channel {
+        select when sensor profile_set
         pre {
             eci = event:attr("eci")
         }
@@ -131,32 +157,15 @@ ruleset manage_sensors {
     }
 
     rule store_test_channel {
-        select when sensor channel_created
+        select when sensor channel_created where event:attr("channel"){"tags"} >< "test"
         pre {
-            channel = event:attr("channel")
-        }
-        send_directive(channel)
-    }
-
-    rule set_sensor_profile {
-        select when sensor ruleset_installed where event:attr("ruleset"){"id"} == rulesets.length() - 1
-        pre {
-            eci = event:attr("eci")
             name = event:attr("name")
+            channel = event:attr("channel"){"id"}
         }
-        event:send(
-            {
-                "eci": eci,
-                "eid": "set-sensor-profile",
-                "domain": "sensor", "type": "profile_updated",
-                "attrs": {
-                    "location": default_location,
-                    "name": name,
-                    "threshold": default_threshold,
-                    "phone_number": default_phone
-                }
-            }
-        )
+        if name != null && name.length() > 0 then noop()
+        fired {
+            ent:sensors{[name, "test_channel"]} := channel
+        }
     }
 
     rule delete_sensor {
