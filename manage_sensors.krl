@@ -1,9 +1,10 @@
 ruleset manage_sensors {
     meta {
         use module io.picolabs.wrangler alias wrangler
+        use module io.picolabs.subscription alias subs
         name "Manage Sensors"
         author "Jason Fox"
-        shares sensors, temperatures
+        shares sensors, temperatures, notifications_sent
     }
 
     global {
@@ -12,40 +13,38 @@ ruleset manage_sensors {
         }
 
         temperatures = function() {
-            ent:sensors.values().map(function(v) {
-                wrangler:skyQuery(v{"test_channel"}, "temperature_store", "temperatures")
+            subs:established().filter(function(v) {
+                v{"Tx_role"} == "sensor"
+            }).map(function(v) {
+                host = v{"Tx_host"} || meta:host
+                wrangler:skyQuery(v{"Tx"}, "temperature_store", "temperatures", {}, host)
             }).reduce(function(a, b) { a.append(b) })
+        }
+
+        notifications_sent = function() {
+            ent:notifications_sent
         }
 
         rulesets = [
             {
                 "id": 0,
-                "url": "https://raw.githubusercontent.com/jfox97/CS462/master/twilio.sdk.krl",
-                "config": {}
-            },
-            {
-                "id": 1,
                 "url": "https://raw.githubusercontent.com/jfox97/CS462/master/temperature_store.krl",
                 "config": {}
             },
             {
-                "id": 2,
+                "id": 1,
                 "url": "https://raw.githubusercontent.com/jfox97/CS462/master/sensor_profile.krl",
                 "config": {}
             },
             {
-                "id": 3,
+                "id": 2,
                 "url": "https://raw.githubusercontent.com/jfox97/CS462/master/io.picoloabs.wovyn.emitter.krl",
                 "config": {}
             },
             {
-                "id": 4,
-                "url": "https://raw.githubusercontent.com/jfox97/CS462/master/wovyn_base.krl",
-                "config": {
-                    "account_sid": meta:rulesetConfig{"account_sid"},
-                    "auth_token": meta:rulesetConfig{"auth_token"},
-                    "messaging_service_sid": meta:rulesetConfig{"messaging_service_sid"}
-                }
+                "id": 3,
+                "url": "file:///Users/jfox/School/CS462/Rulesets/wovyn_base.krl",
+                "config": {}
             },
         ]
 
@@ -188,6 +187,48 @@ ruleset manage_sensors {
             raise wrangler event "child_deletion_request"
                 attributes {"eci": eci}
             clear ent:sensors{name}
+        }
+    }
+
+    rule subscribe_sensor {
+        select when sensor subscription
+        pre {
+            wellKnown_eci = event:attr("wellKnown_eci")
+            name = event:attr("name")
+            host = event:attr("host")
+        }
+        if wellKnown_eci && wellKnown_eci != "" then noop()
+        fired {
+            raise wrangler event "subscription"
+                attributes {
+                    "wellKnown_Tx": wellKnown_eci,
+                    "Rx_role": "manager", "Tx_role": "sensor",
+                    "name": name, "channel_type": "subscription",
+                    "Tx_host": host
+                }
+        }
+    }
+
+    rule send_threshold_violation_notification {
+        select when wovyn threshold_violation
+        pre {
+            temperature = event:attr("temperature")
+            sensor = event:attr("sensor")
+        }
+        always {
+            raise manager event "send_message"
+                attributes {
+                    "message": "High temp noticiation: Current temperature is " + temperature + " degrees Fahrenheit"
+                }
+            ent:notifications_sent := ent:notifications_sent.defaultsTo([])
+            ent:notifications_sent := ent:notifications_sent.append({"sensor": sensor, "temperature": temperature})
+        }
+    }
+
+    rule reset_notification_history {
+        select when manager reset_notification_history
+        always {
+            ent:notifications_sent := []
         }
     }
 }

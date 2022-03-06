@@ -1,11 +1,7 @@
 ruleset wovyn_base {
   meta {
-    use module com.twilio.sdk alias twilio
     use module io.picolabs.wrangler alias wrangler
-    with
-      accountSID = meta:rulesetConfig{"account_sid"}
-      authToken = meta:rulesetConfig{"auth_token"}
-      messagingServiceSID = meta:rulesetConfig{"messaging_service_sid"}
+    use module io.picolabs.subscription alias subs
     use module sensor_profile alias profile
     name "Wovyn Base"
     author "Jason Fox"
@@ -44,27 +40,26 @@ ruleset wovyn_base {
 
   rule find_high_temps {
     select when wovyn new_temperature_reading where event:attr("temperature")[0]{"temperatureF"} > threshold()
+    foreach subs:established() setting (sub)
     pre {
-      temp = event:attr("temperature")[0]{"temperatureF"}
+      temperature = event:attr("temperature")[0]{"temperatureF"}
+      timestamp = event:attr("timestamp")
+      host = sub{"Tx_host"} || meta:host
     }
-    send_directive("High temp received", {"temperature": temp})
-    always {
-      raise wovyn event "threshold_violation" attributes {
-        "temperature": temp,
-        "timestamp": event:attr("timestamp")
-      }
-    }
+    event:send(
+      {
+        "eci": sub{"Tx"},
+        "eid": "threshold_notification",
+        "domain": "wovyn", "type": "threshold_violation",
+        "attrs": {
+          "temperature": temperature,
+          "sensor": name(),
+          "timestamp": timestamp
+        }
+      }, host
+    )
   }
-
-  rule threshold_notification {
-    select when wovyn threshold_violation
-    pre {
-      temp = event:attr("temperature").klog("High temperature: ")
-      timestamp = event:attr("timestamp").klog("Timestamp: ")
-    }
-    twilio:sendMessage(phone(), "High temperature alert. Temperature: " + temp + " Timestamp: " + timestamp)
-  }
-
+  
   rule send_back_channel {
     select when wrangler channel_created
     pre {
@@ -83,4 +78,39 @@ ruleset wovyn_base {
       }
     )
   }
+
+  rule ruleset_added {
+    select when wrangler ruleset_installed
+      where event:attr("rids") >< meta:rid
+    pre {
+      parent_eci = wrangler:parent_eci()
+      wellKnown_eci = subs:wellKnown_Rx(){"id"}
+    }
+    event:send(
+      {
+        "eci": parent_eci,
+        "domain": "sensor", "type": "subscription",
+        "attrs": {
+          "wellKnown_eci": wellKnown_eci,
+          "name": name()
+        }
+      }
+    )
+  }
+
+  rule auto_accept {
+    select when wrangler inbound_pending_subscription_added
+    pre {
+        my_role = event:attr("Rx_role")
+        their_role = event:attr("Tx_role")
+    }
+    if my_role=="sensor" && their_role=="manager" then noop()
+    fired {
+        raise wrangler event "pending_subscription_approval"
+            attributes event:attrs
+    } else {
+        raise wrangler event "inbound_rejection"
+            attributes event:attrs
+    }
+}
 }
