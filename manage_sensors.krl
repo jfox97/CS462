@@ -43,7 +43,7 @@ ruleset manage_sensors {
             },
             {
                 "id": 3,
-                "url": "file:///Users/jfox/School/CS462/Rulesets/wovyn_base.krl",
+                "url": "https://raw.githubusercontent.com/jfox97/CS462/master/wovyn_base.krl",
                 "config": {}
             },
         ]
