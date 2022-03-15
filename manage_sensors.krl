@@ -44,7 +44,7 @@ ruleset manage_sensors {
             },
             {
                 "id": 1,
-                "url": "file:///Users/jfox/School/CS462/Rulesets/temperature_store.krl",
+                "url": "https://raw.githubusercontent.com/jfox97/CS462/master/temperature_store.krl",
                 "config": {}
             },
             {
