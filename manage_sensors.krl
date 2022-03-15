@@ -4,7 +4,7 @@ ruleset manage_sensors {
         use module io.picolabs.subscription alias subs
         name "Manage Sensors"
         author "Jason Fox"
-        shares sensors, temperatures, notifications_sent
+        shares sensors, temperatures, notifications_sent, temperature_reports
     }
 
     global {
@@ -21,19 +21,30 @@ ruleset manage_sensors {
             }).reduce(function(a, b) { a.append(b) })
         }
 
+        min = function(x, y) {
+            x < y => x | y
+        }
+
+        temperature_reports = function() {
+            report_ids = ent:temperature_reports.keys().sort("reverse").slice(0, min(4, ent:temperature_reports.length()))
+            report_ids.reduce(function(recent_reports, report_id) {
+              recent_reports.put(report_id, ent:temperature_reports{report_id})
+            }, {})
+        }
+
         notifications_sent = function() {
             ent:notifications_sent
         }
 
-        rulesets = [
+        rulesets = [ 
             {
                 "id": 0,
-                "url": "https://raw.githubusercontent.com/jfox97/CS462/master/temperature_store.krl",
+                "url": "https://raw.githubusercontent.com/jfox97/CS462/master/sensor_profile.krl",
                 "config": {}
             },
             {
                 "id": 1,
-                "url": "https://raw.githubusercontent.com/jfox97/CS462/master/sensor_profile.krl",
+                "url": "file:///Users/jfox/School/CS462/Rulesets/temperature_store.krl",
                 "config": {}
             },
             {
@@ -57,6 +68,8 @@ ruleset manage_sensors {
         select when sensors init
         always {
             ent:sensors := {}
+            ent:current_rcn := 1000
+            ent:temperature_reports := {}
         }
     }
     
@@ -229,6 +242,45 @@ ruleset manage_sensors {
         select when manager reset_notification_history
         always {
             ent:notifications_sent := []
+        }
+    }
+
+    rule start_temperature_report {
+        select when manager start_temperature_report
+        foreach subs:established().filter(function(v) {
+            v{"Tx_role"} == "sensor"
+        }) setting(sensor_sub)
+        pre {
+            host = sensor_sub{"Tx_host"} || meta:host
+            tx = sensor_sub{"Tx"}
+            rx = sensor_sub{"Rx"}
+        }
+        event:send(
+            {
+                "eci": tx,
+                "eid": "temperature_report",
+                "domain": "manager", "type": "temperature_report",
+                "attrs": {"rcn": ent:current_rcn, "tx": rx}
+            }, 
+            host
+        )
+        always {
+            ent:current_rcn := ent:current_rcn + 1 on final
+        }
+    }
+
+    rule catch_temperature_reports {
+        select when sensor temperature_report_created
+        pre {
+            name = event:attr("name")
+            rcn = event:attr("rcn")
+            temperature = event:attr("temperature").put("name", name)
+            num_sensors = subs:established().length()
+        }
+        always {
+            ent:temperature_reports{[rcn, "temperature_sensors"]} := num_sensors
+            ent:temperature_reports{[rcn, "responding"]} := (ent:temperature_reports{[rcn, "responding"]}).defaultsTo(0) + 1
+            ent:temperature_reports{[rcn, "temperatures"]} := (ent:temperature_reports{[rcn, "temperatures"]}).defaultsTo([]).append(temperature)
         }
     }
 }

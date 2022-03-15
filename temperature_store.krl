@@ -2,6 +2,8 @@ ruleset temperature_store {
     meta {
       name "Temperature Store"
       author "Jason Fox"
+      use module io.picolabs.subscription alias subs
+      use module sensor_profile alias profile
       provides temperatures, threshold_violations, inrange_temperatures
       shares temperatures, threshold_violations, inrange_temperatures
     }
@@ -56,5 +58,27 @@ ruleset temperature_store {
             ent:temperature_readings := []
             ent:threshold_violations := []
         }
+    }
+
+    rule create_temperature_report {
+        select when manager temperature_report
+        pre {
+            rcn = event:attr("rcn")
+            tx = event:attr("tx")
+            sub = subs:established().filter(function(v) {
+                v{"Tx"} == tx
+            }).head()
+            name = profile:profile(){"name"}
+            host = sub{"Tx_host"} || meta:host
+        }
+        event:send(
+            {
+                "eci": tx,
+                "eid": "temperature_report_created",
+                "domain": "sensor", "type": "temperature_report_created",
+                "attrs": {"rcn": rcn, "name": name, "temperature": ent:temperature_readings[ent:temperature_readings.length() - 1] || {"temperature": "N/A"}}
+            }, 
+            host
+        )
     }
 }

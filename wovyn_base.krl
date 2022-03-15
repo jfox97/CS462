@@ -112,5 +112,5 @@ ruleset wovyn_base {
         raise wrangler event "inbound_rejection"
             attributes event:attrs
     }
-}
+  }
 }
