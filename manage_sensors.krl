@@ -54,7 +54,7 @@ ruleset manage_sensors {
             },
             {
                 "id": 3,
-                "url": "https://raw.githubusercontent.com/jfox97/CS462/master/wovyn_base.krl",
+                "url": "file:///Users/jfox/School/CS462/Rulesets/wovyn_base.krl",
                 "config": {}
             },
         ]
@@ -282,5 +282,47 @@ ruleset manage_sensors {
             ent:temperature_reports{[rcn, "responding"]} := (ent:temperature_reports{[rcn, "responding"]}).defaultsTo(0) + 1
             ent:temperature_reports{[rcn, "temperatures"]} := (ent:temperature_reports{[rcn, "temperatures"]}).defaultsTo([]).append(temperature)
         }
+    }
+
+    rule update_wovyn_base_ruleset {
+        select when manager update_wovyn_base_ruleset
+        foreach subs:established().filter(function(v) {
+            v{"Tx_role"} == "sensor"
+        }) setting(sensor_sub)
+        pre {
+            tx = sensor_sub{"Tx"}
+        }
+        event:send(
+            {
+                "eci": tx,
+                "eid": "update-ruleset",
+                "domain": "wrangler", "type": "install_ruleset_request",
+                "attrs": {
+                    "url": "file:///Users/jfox/School/CS462/Rulesets/wovyn_base.krl",
+                    "config": {}
+                }
+            }
+        )
+    }
+
+    rule update_gossip_ruleset {
+        select when manager update_gossip_ruleset
+        foreach subs:established().filter(function(v) {
+            v{"Tx_role"} == "sensor"
+        }) setting(sensor_sub)
+        pre {
+            tx = sensor_sub{"Tx"}
+        }
+        event:send(
+            {
+                "eci": tx,
+                "eid": "update-ruleset",
+                "domain": "wrangler", "type": "install_ruleset_request",
+                "attrs": {
+                    "url": "file:///Users/jfox/School/CS462/Rulesets/gossip.krl",
+                    "config": {}
+                }
+            }
+        )
     }
 }
