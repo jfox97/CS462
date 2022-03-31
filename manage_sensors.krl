@@ -54,9 +54,14 @@ ruleset manage_sensors {
             },
             {
                 "id": 3,
-                "url": "file:///Users/jfox/School/CS462/Rulesets/wovyn_base.krl",
+                "url": "https://raw.githubusercontent.com/jfox97/CS462/master/wovyn_base.krl",
                 "config": {}
             },
+            {
+                "id": 4,
+                "url": "https://raw.githubusercontent.com/jfox97/CS462/master/gossip.krl",
+                "config": {}
+            }
         ]
 
         default_location = "Vineyard, UT"
@@ -298,7 +303,7 @@ ruleset manage_sensors {
                 "eid": "update-ruleset",
                 "domain": "wrangler", "type": "install_ruleset_request",
                 "attrs": {
-                    "url": "file:///Users/jfox/School/CS462/Rulesets/wovyn_base.krl",
+                    "url": "https://raw.githubusercontent.com/jfox97/CS462/master/wovyn_base.krl",
                     "config": {}
                 }
             }
@@ -319,8 +324,29 @@ ruleset manage_sensors {
                 "eid": "update-ruleset",
                 "domain": "wrangler", "type": "install_ruleset_request",
                 "attrs": {
-                    "url": "file:///Users/jfox/School/CS462/Rulesets/gossip.krl",
+                    "url": "https://raw.githubusercontent.com/jfox97/CS462/master/gossip.krl",
                     "config": {}
+                }
+            }
+        )
+    }
+
+    rule set_period {
+        select when manager set_period
+        foreach subs:established().filter(function(v) {
+            v{"Tx_role"} == "sensor"
+        }) setting(sensor_sub)
+        pre {
+            tx = sensor_sub{"Tx"}
+            period = event:attr("period")
+        }
+        event:send(
+            {
+                "eci": tx,
+                "eid": "change_period",
+                "domain": "gossip", "type": "change_period",
+                "attrs": {
+                    "period": period,
                 }
             }
         )

@@ -2,7 +2,7 @@ ruleset gossip {
     meta {
         name "Gossip"
         use module io.picolabs.subscription alias subs
-        shares period, get_schedule, heartbeat_count, temperatures, sequences, sensor_id, get_rumors_for_seen, get_sequences_from_seen, get_potential_peers, get_peer
+        shares period, get_schedule, heartbeat_count, temperatures, sequences, sensor_id, get_rumors_for_seen, get_sequences_from_seen, get_potential_peers, get_peer, channels
     }
 
     global {
@@ -30,6 +30,10 @@ ruleset gossip {
 
         sensor_id = function() {
             ent:sensor_id
+        }
+
+        channels = function() {
+            ent:channels
         }
 
         get_rumors_for_seen = function(seen) {
@@ -68,7 +72,9 @@ ruleset gossip {
         get_sequences_from_seen = function(seen) {
             all_sensors = seen.keys().union(ent:sequences{ent:sensor_id}.keys())
             all_sensors.reduce(function(m, sensor_id) {
-                m.put([sensor_id], max(seen{sensor_id} || -1, ent:sequences{[ent:sensor_id, sensor_id]} || -1))
+                seen_for_sensor = seen{sensor_id}.isnull() => -1 | seen{sensor_id}
+                our_seen_for_sensor = ent:sequences{[ent:sensor_id, sensor_id]}.isnull() => -1 | ent:sequences{[ent:sensor_id, sensor_id]}
+                m.put([sensor_id], max(seen_for_sensor, our_seen_for_sensor))
             }, {})
         }
 
@@ -79,7 +85,8 @@ ruleset gossip {
         get_potential_peers = function() {
             ent:sequences.keys().difference([ent:sensor_id]).filter(function (sensor_id) {
                 ent:sequences{ent:sensor_id}.keys().any(function (key) {
-                    ent:sequences{[ent:sensor_id, key]} > (ent:sequences{[sensor_id, key]} || -1)
+                    peer_sequence = ent:sequences{[sensor_id, key]}.isnull() => -1 | ent:sequences{[sensor_id, key]}
+                    ent:sequences{[ent:sensor_id, key]} > peer_sequence
                 })
             })
         }
@@ -122,7 +129,7 @@ ruleset gossip {
             ent:temperatures := {}
             ent:sensor_id := random:uuid()
             ent:sequences := {}
-            ent:sequences{[ent:sensor_id, ent:sensor_id]} := -1
+            ent:sequences:= {}
             ent:channels := {} // keep a mapping between sensor_ids and tx channel ids
         }
     }
@@ -142,7 +149,7 @@ ruleset gossip {
     }
 
     rule execute_seen {
-        select when gossip heartbeat where get_potential_peers().length() == 0
+        select when gossip heartbeat where get_potential_peers().length() == 0 || random:integer(2) == 1
         foreach subs:established().filter(function(v) {
             v{"Tx_role"} == "peer"
         }) setting(peer_sub)
@@ -182,7 +189,6 @@ ruleset gossip {
         pre {
             sensor_id = event:attr("sensor_id")
             tx = ent:channels{sensor_id}
-            new_sequences = get_sequences_from_seen(ent:sequences{sensor_id})
         }
         if (not tx.isnull()) then
         event:send(
@@ -194,7 +200,7 @@ ruleset gossip {
             }
         )
         fired {
-            ent:sequences{sensor_id} := new_sequences
+            ent:sequences{sensor_id} := get_sequences_from_seen(ent:sequences{sensor_id}) on final
         }
     }
 
@@ -203,7 +209,7 @@ ruleset gossip {
         pre {
             temperature = event:attr("temperature")[0]{"temperatureF"}
             timestamp = event:attr("timestamp")
-            sequence_number = ent:sequences{[ent:sensor_id, ent:sensor_id]} + 1
+            sequence_number = ent:sequences{[ent:sensor_id, ent:sensor_id]}.isnull() => 0 | ent:sequences{[ent:sensor_id, ent:sensor_id]} + 1
         }
         always {
             ent:temperatures{[ent:sensor_id, sequence_number]} := {
