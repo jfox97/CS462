@@ -37,44 +37,51 @@ ruleset gossip {
         }
 
         get_rumors_for_seen = function(seen) {
-            new_sensors = ent:temperatures.keys().difference(seen.keys())
-            new_sensor_rumors = new_sensors.reduce(function(array, sensor_id) {
+            new_messages = ent:sequences{ent:sensor_id}.keys().difference(seen.keys())
+            new_message_rumors = new_messages.reduce(function(array, message_head) {
+                sensor_id = message_head.split(re#:#)[0]
+                message_type = message_head.split(re#:#)[1]
+                updated_array = message_type == "temperature" => 
                 array.append(ent:temperatures{sensor_id}.map(function(temperature_object) {
                     {
-                        "MessageID": sensor_id + ":" + temperature_object{"sequence"},
+                        "MessageID": message_head + ":" + temperature_object{"sequence"},
                         "SensorID": sensor_id,
                         "Temperature": temperature_object{"temperature"},
                         "Timestamp": temperature_object{"timestamp"}
                     }
-                }))
+                })) | null
+                updated_array
             }, [])
 
-            higher_sensors = ent:temperatures.keys().intersection(seen.keys()).filter(function(sensor_id) {
-                ent:sequences{[ent:sensor_id, sensor_id]} > seen{sensor_id}
+            higher_messages = ent:sequences{ent:sensor_id}.keys().intersection(seen.keys()).filter(function(message_head) {
+                ent:sequences{[ent:sensor_id, message_head]} > seen{message_head}
             })
-            higher_sensor_rumors = higher_sensors.reduce(function(array, sensor_id) {
-                temperature_objects = ent:temperatures{sensor_id}.filter(function(temperature_object) {
-                    (not temperature_object.isnull()) && temperature_object{"sequence"} > seen{sensor_id}
-                })
-                array.append(temperature_objects.map(function(temperature_object) {
+            higher_message_rumors = higher_messages.reduce(function(array, message_head) {
+                sensor_id = message_head.split(re#:#)[0]
+                message_type = message_head.split(re#:#)[1]
+                messages = message_type == "temperature" => ent:temperatures{sensor_id}.filter(function(temperature_object) {
+                    (not temperature_object.isnull()) && temperature_object{"sequence"} > seen{message_head}
+                }) | null
+                updated_array = message_type == "temperature" => array.append(messages.map(function(temperature_object) {
                     {
-                        "MessageID": sensor_id + ":" + temperature_object{"sequence"},
+                        "MessageID": message_head + ":" + temperature_object{"sequence"},
                         "SensorID": sensor_id,
                         "Temperature": temperature_object{"temperature"},
                         "Timestamp": temperature_object{"timestamp"}
                     }
-                }))
+                })) | null
+                updated_array
             }, [])
 
-            new_sensor_rumors.append(higher_sensor_rumors)
+            new_message_rumors.append(higher_message_rumors)
         }
 
         get_sequences_from_seen = function(seen) {
-            all_sensors = seen.keys().union(ent:sequences{ent:sensor_id}.keys())
-            all_sensors.reduce(function(m, sensor_id) {
-                seen_for_sensor = seen{sensor_id}.isnull() => -1 | seen{sensor_id}
-                our_seen_for_sensor = ent:sequences{[ent:sensor_id, sensor_id]}.isnull() => -1 | ent:sequences{[ent:sensor_id, sensor_id]}
-                m.put([sensor_id], max(seen_for_sensor, our_seen_for_sensor))
+            all_messages = seen.keys().union(ent:sequences{ent:sensor_id}.keys())
+            all_messages.reduce(function(m, message_head) {
+                seen_for_message_head = seen{message_head}.isnull() => -1 | seen{message_head}
+                our_seen_for_message_head = ent:sequences{[ent:sensor_id, message_head]}.isnull() => -1 | ent:sequences{[ent:sensor_id, message_head]}
+                m.put([message_head], max(seen_for_message_head, our_seen_for_message_head))
             }, {})
         }
 
@@ -129,7 +136,6 @@ ruleset gossip {
             ent:temperatures := {}
             ent:sensor_id := random:uuid()
             ent:sequences := {}
-            ent:sequences:= {}
             ent:channels := {} // keep a mapping between sensor_ids and tx channel ids
         }
     }
@@ -209,7 +215,7 @@ ruleset gossip {
         pre {
             temperature = event:attr("temperature")[0]{"temperatureF"}
             timestamp = event:attr("timestamp")
-            sequence_number = ent:sequences{[ent:sensor_id, ent:sensor_id]}.isnull() => 0 | ent:sequences{[ent:sensor_id, ent:sensor_id]} + 1
+            sequence_number = ent:sequences{[ent:sensor_id, ent:sensor_id + ":temperature"]}.isnull() => 0 | ent:sequences{[ent:sensor_id, ent:sensor_id + ":temperature"]} + 1
         }
         always {
             ent:temperatures{[ent:sensor_id, sequence_number]} := {
@@ -217,14 +223,14 @@ ruleset gossip {
                 "temperature": temperature,
                 "timestamp": timestamp
             }
-            ent:sequences{[ent:sensor_id, ent:sensor_id]} := sequence_number
+            ent:sequences{[ent:sensor_id, ent:sensor_id + ":temperature"]} := sequence_number
         }
     }
 
     rule store_rumor {
         select when gossip rumor
         pre {
-            sequence_number = event:attr("MessageID").split(re#:#)[1].as("Number")
+            sequence_number = event:attr("MessageID").split(re#:#)[2].as("Number")
             sensor_id = event:attr("SensorID")
             temperature = event:attr("Temperature")
             timestamp = event:attr("Timestamp")
@@ -244,14 +250,16 @@ ruleset gossip {
     rule set_sequence {
         select when gossip rumor
         pre {
-            sequence_number = event:attr("MessageID").split(re#:#)[1].as("Number")
+            id_split = event:attr("MessageID").split(re#:#)
+            message_head = id_split[0] + ":" + id_split[1]
+            sequence_number = id_split[2].as("Number")
             sensor_id = event:attr("SensorID")
         }
-        if (ent:sequences{ent:sensor_id} >< sensor_id && ent:sequences{[ent:sensor_id, sensor_id]} == sequence_number - 1) ||
-            ((not (ent:sequences{ent:sensor_id} >< sensor_id)) && sequence_number == 0)
+        if (ent:sequences{ent:sensor_id} >< message_head && ent:sequences{[ent:sensor_id, message_head]} == sequence_number - 1) ||
+            ((not (ent:sequences{ent:sensor_id} >< message_head)) && sequence_number == 0)
             then noop()
         fired {
-            ent:sequences{[ent:sensor_id, sensor_id]} := sequence_number
+            ent:sequences{[ent:sensor_id, message_head]} := sequence_number
         }
     }
 
