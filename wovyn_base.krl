@@ -58,6 +58,21 @@ ruleset wovyn_base {
         }
       }, host
     )
+    fired {
+      raise wovyn event "internal_threshold_violation"
+    }
+  }
+  
+  rule find_normal_temps {
+    select when wovyn new_temperature_reading where event:attr("temperature")[0]{"temperatureF"} <= threshold()
+    pre {
+      temperature = event:attr("temperature")[0]{"temperatureF"}
+      timestamp = event:attr("timestamp")
+    }
+    noop()
+    fired {
+      raise wovyn event "temp_okay"
+    }
   }
   
   rule send_back_channel {

@@ -2,7 +2,8 @@ ruleset gossip {
     meta {
         name "Gossip"
         use module io.picolabs.subscription alias subs
-        shares period, get_schedule, heartbeat_count, temperatures, sequences, sensor_id, get_rumors_for_seen, get_sequences_from_seen, get_potential_peers, get_peer, channels
+        shares period, get_schedule, heartbeat_count, temperatures, sequences, sensor_id, get_rumors_for_seen,
+        get_sequences_from_seen, get_potential_peers, get_peer, channels, violations, violation_messages, violation_counts
     }
 
     global {
@@ -36,6 +37,18 @@ ruleset gossip {
             ent:channels
         }
 
+        violations = function() {
+            ent:violations
+        }
+
+        violation_messages = function() {
+            ent:violation_messages
+        }
+
+        violation_counts = function() {
+            ent:violation_counter
+        }
+
         get_rumors_for_seen = function(seen) {
             new_messages = ent:sequences{ent:sensor_id}.keys().difference(seen.keys())
             new_message_rumors = new_messages.reduce(function(array, message_head) {
@@ -49,7 +62,13 @@ ruleset gossip {
                         "Temperature": temperature_object{"temperature"},
                         "Timestamp": temperature_object{"timestamp"}
                     }
-                })) | null
+                })) | array.append(ent:violation_messages{sensor_id}.map(function(violation_message) {
+                    {
+                        "MessageID": message_head + ":" + violation_message{"sequence"},
+                        "SensorID": sensor_id,
+                        "Increment": violation_message{"increment"}
+                    }
+                }))
                 updated_array
             }, [])
 
@@ -61,7 +80,9 @@ ruleset gossip {
                 message_type = message_head.split(re#:#)[1]
                 messages = message_type == "temperature" => ent:temperatures{sensor_id}.filter(function(temperature_object) {
                     (not temperature_object.isnull()) && temperature_object{"sequence"} > seen{message_head}
-                }) | null
+                }) | ent:violation_messages{sensor_id}.filter(function(violation_message) {
+                    (not violation_message.isnull()) && violation_message{"sequence"} > seen{message_head}
+                })
                 updated_array = message_type == "temperature" => array.append(messages.map(function(temperature_object) {
                     {
                         "MessageID": message_head + ":" + temperature_object{"sequence"},
@@ -69,7 +90,13 @@ ruleset gossip {
                         "Temperature": temperature_object{"temperature"},
                         "Timestamp": temperature_object{"timestamp"}
                     }
-                })) | null
+                })) | array.append(messages.map(function(violation_message) {
+                    {
+                        "MessageID": message_head + ":" + violation_message{"sequence"},
+                        "SensorID": sensor_id,
+                        "Increment": violation_message{"increment"}
+                    }
+                }))
                 updated_array
             }, [])
 
@@ -134,6 +161,9 @@ ruleset gossip {
         always {
             ent:heartbeat_count := 0
             ent:temperatures := {}
+            ent:violations := {}
+            ent:violation_messages := {}
+            ent:violation_counter := {}
             ent:sensor_id := random:uuid()
             ent:sequences := {}
             ent:channels := {} // keep a mapping between sensor_ids and tx channel ids
@@ -227,10 +257,55 @@ ruleset gossip {
         }
     }
 
-    rule store_rumor {
+    rule store_violation {
+        select when wovyn internal_threshold_violation
+        pre {
+            sequence_number = ent:sequences{[ent:sensor_id, ent:sensor_id + ":violation"]}.isnull() => 0 | ent:sequences{[ent:sensor_id, ent:sensor_id + ":violation"]} + 1
+            increment = (not (ent:violations >< ent:sensor_id)) || (ent:violations{ent:sensor_id} == 0) => 1 | 0
+        }
+        always {
+            ent:violations{ent:sensor_id} := 1
+            ent:violation_messages{[ent:sensor_id, sequence_number]} := {
+                "sequence": sequence_number,
+                "increment": increment
+            }
+            ent:violation_counter{ent:sensor_id} := ent:violation_counter{ent:sensor_id}.defaultsTo(0) + increment
+            ent:sequences{[ent:sensor_id, ent:sensor_id + ":violation"]} := sequence_number
+        }
+    }
+
+    rule store_temp_okay {
+        select when wovyn temp_okay
+        pre {
+            sequence_number = ent:sequences{[ent:sensor_id, ent:sensor_id + ":violation"]}.isnull() => 0 | ent:sequences{[ent:sensor_id, ent:sensor_id + ":violation"]} + 1
+        }
+        if (ent:violations >< ent:sensor_id) && (ent:violations{ent:sensor_id} == 1) then noop()
+        fired {
+            ent:violations{ent:sensor_id} := 0
+            ent:violation_messages{[ent:sensor_id, sequence_number]} := {
+                "sequence": sequence_number,
+                "increment": -1
+            }
+            ent:sequences{[ent:sensor_id, ent:sensor_id + ":violation"]} := sequence_number
+        }
+    }
+
+    rule handle_rumor {
         select when gossip rumor
         pre {
+            message_type = event:attr("MessageID").split(re#:#)[1]
             sequence_number = event:attr("MessageID").split(re#:#)[2].as("Number")
+            event_attributes = event:attrs.put(["message_type"], message_type).put(["sequence_number"], sequence_number)
+        }
+        always {
+            raise gossip event "handle_rumor" attributes event_attributes
+        }
+    }
+
+    rule handle_temperature_rumor {
+        select when gossip handle_rumor where event:attr("message_type") == "temperature"
+        pre {
+            sequence_number = event:attr("sequence_number")
             sensor_id = event:attr("SensorID")
             temperature = event:attr("Temperature")
             timestamp = event:attr("Timestamp")
@@ -244,6 +319,30 @@ ruleset gossip {
                 "temperature": temperature,
                 "timestamp": timestamp
             }
+        }
+    }
+
+    rule handle_violation_rumor {
+        select when gossip handle_rumor where event:attr("message_type") == "violation"
+        pre {
+            sequence_number = event:attr("sequence_number")
+            sensor_id = event:attr("SensorID")
+            increment = event:attr("Increment")
+        }
+        if (ent:violation_messages >< sensor_id && ent:violation_messages{sensor_id}[sequence_number].isnull()) ||
+            (not (ent:violation_messages >< sensor_id))
+            then noop()
+        fired {
+            ent:violation_messages{[sensor_id, sequence_number]} := {
+                "sequence": sequence_number,
+                "increment": increment
+            }
+            ent:violations{sensor_id} := ent:violation_messages{sensor_id}.reduce(function(violation, message) {
+                message != null => violation + message{"increment"} | violation
+            }, 0)
+            ent:violation_counter{sensor_id} := ent:violation_messages{sensor_id}.reduce(function(violation, message) {
+                message != null && message{"increment"} == 1 => violation + 1 | violation
+            }, 0)
         }
     }
 
